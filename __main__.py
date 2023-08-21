@@ -6,7 +6,7 @@ from datetime import datetime
 
 from dataloader import PreprocessedEcdcDataLoader
 from model import VoiceKeyModel, Quant_VoiceKeyModel
-from utils import set_seed, save_model, evaluate_model
+from utils import set_seed, save_model, evaluate_model, load_model
 from config import get_parser
 import copy
 import os
@@ -161,8 +161,40 @@ def quantization():
 
     fused_model.to(cpu_device).eval()
     quantized_model = torch.quantization.convert(fused_model, inplace=True)
-    print(quantized_model)
     save_torchscript_model(model=quantized_model, model_dir="quant_models", model_filename="quant_128_adamw")
+
+
+def model_size(model):
+    param_size = 0
+    for param in model.parameters():
+        param_size += param.nelement() * param.element_size()
+    buffer_size = 0
+    for buffer in model.buffers():
+        buffer_size += buffer.nelement() * buffer.element_size()
+
+    size_all_mb = (param_size + buffer_size) / 1024**2
+
+    print('model size: {:.3f}MB'.format(size_all_mb))
+
+
+def time_size():
+    cuda_device = torch.device("cuda:0")
+    cpu_device = torch.device("cpu:0")
+    args = get_parser().parse_args()
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    set_seed(42)
+    train_loader = PreprocessedEcdcDataLoader(args.train_dir, batch_size=args.batch_size)
+    test_loader = PreprocessedEcdcDataLoader(args.test_dir, batch_size=args.batch_size)
+
+    model = initialize_model(dim=args.dim, device=device)
+    optimizer = optim.AdamW(model.parameters())
+    model, optimizer, start_epoch = load_model(
+        model, optimizer, "saved_models/original_test", "voicekey_epoch_0"
+    )
+    model_size(model)
+
+    quantized_model = load_torchscript_model(model_filepath="quant_models/quant_128_adamw", device=device)
+    model_size(quantized_model)
 
 
 def initialize_model(dim, device):
@@ -200,3 +232,4 @@ def main():
 if __name__ == "__main__":
     # main()
     quantization()
+    time_size()
